@@ -1,20 +1,25 @@
 """Werkzeuge, die Jarvis selbstständig benutzen kann.
 
-Jedes Tool hat ein JSON-Schema (für Claude) und eine Python-Funktion (die es ausführt).
+Jedes Tool hat ein JSON-Schema (für das Sprachmodell) und eine Python-Funktion (die es ausführt).
 Handy-Funktionen laufen über Termux:API und melden sich sauber ab, wenn sie fehlen.
 """
 
 from __future__ import annotations
 
 import fnmatch
+import html
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 import webbrowser
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Callable
 
@@ -35,7 +40,7 @@ BLOCKED_SHELL_PATTERNS = [
 
 
 class ToolError(Exception):
-    """Fehler, der als verständliche Meldung an Claude zurückgeht."""
+    """Fehler, der als verständliche Meldung an das Modell zurückgeht."""
 
 
 @dataclass
@@ -108,6 +113,97 @@ def _run(cmd: list[str] | str, timeout: int = 60, cwd: Path | None = None, shell
     return f"[exit {proc.returncode}]\n{out}".rstrip()
 
 
+BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/128.0 Mobile Safari/537.36",
+    "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
+}
+
+
+def _http_get(url: str, data: bytes | None = None, timeout: int = 20) -> tuple[str, str]:
+    """Lädt eine Seite. Rückgabe: (Text, Content-Type)."""
+    request = urllib.request.Request(url, data=data, headers=BROWSER_HEADERS)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read(MAX_READ_BYTES)
+            charset = response.headers.get_content_charset() or "utf-8"
+            return raw.decode(charset, "replace"), response.headers.get("Content-Type", "")
+    except urllib.error.HTTPError as exc:
+        raise ToolError(f"HTTP {exc.code} beim Laden von {url}")
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise ToolError(f"Konnte {url} nicht laden: {exc}")
+
+
+class _TextExtractor(HTMLParser):
+    """Macht aus HTML lesbaren Text (ohne Skripte, Styles, Navigation)."""
+
+    SKIP = {"script", "style", "noscript", "svg", "template", "nav", "footer", "form"}
+    BLOCK = {"p", "div", "br", "li", "tr", "section", "article", "header", "h1", "h2", "h3", "h4", "h5", "h6",
+             "pre", "blockquote", "table", "ul", "ol"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.title = ""
+        self._skip = 0
+        self._in_title = False
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self.SKIP:
+            self._skip += 1
+        elif tag == "title":
+            self._in_title = True
+        elif tag in self.BLOCK:
+            self.parts.append("\n")
+        if tag == "li":
+            self.parts.append("- ")
+
+    def handle_endtag(self, tag):
+        if tag in self.SKIP and self._skip:
+            self._skip -= 1
+        elif tag == "title":
+            self._in_title = False
+        elif tag in self.BLOCK:
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        if self._in_title:
+            self.title += data
+        elif not self._skip:
+            self.parts.append(data)
+
+
+def html_to_text(page: str) -> tuple[str, str]:
+    """Rückgabe: (Titel, Text)."""
+    parser = _TextExtractor()
+    parser.feed(page)
+    text = re.sub(r"[ \t\r\f\v]+", " ", "".join(parser.parts))
+    text = re.sub(r"\s*\n\s*", "\n", text).strip()
+    return parser.title.strip(), text
+
+
+def parse_ddg_results(page: str, limit: int) -> list[dict]:
+    """Liest Treffer aus der HTML-Ergebnisseite von DuckDuckGo."""
+    def clean(fragment: str) -> str:
+        return html.unescape(re.sub(r"<[^>]+>", "", fragment)).strip()
+
+    links = re.findall(r'<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>', page, re.S)
+    snippets = re.findall(r'class="result__snippet"[^>]*>(.*?)</(?:a|div|td)>', page, re.S)
+    results = []
+    for i, (href, title) in enumerate(links):
+        href = html.unescape(href)
+        if "uddg=" in href:
+            href = urllib.parse.parse_qs(urllib.parse.urlparse(href).query).get("uddg", [href])[0]
+        if href.startswith("//"):
+            href = "https:" + href
+        if "duckduckgo.com/y.js" in href:  # Werbung
+            continue
+        results.append({"title": clean(title), "url": href, "snippet": clean(snippets[i]) if i < len(snippets) else ""})
+        if len(results) >= limit:
+            break
+    return results
+
+
 def _is_termux() -> bool:
     return "com.termux" in os.environ.get("PREFIX", "") or shutil.which("termux-info") is not None
 
@@ -159,7 +255,7 @@ class Toolbox:
             return _truncate(tool.func(**args)), False
         except ToolError as exc:
             return str(exc), True
-        except Exception as exc:  # noqa: BLE001 – Fehler gehen als Text an Claude zurück
+        except Exception as exc:  # noqa: BLE001 – Fehler gehen als Text an das Modell zurück
             return f"{type(exc).__name__}: {exc}", True
 
     # ------------------------------------------------------------ Registrierung
@@ -168,6 +264,8 @@ class Toolbox:
         self._register_files()
         self._register_code()
         self._register_phone()
+        if self.settings.web_tools:
+            self._register_web()
 
     def _register_memory(self) -> None:
         b = self.brain
@@ -420,6 +518,40 @@ class Toolbox:
                 raise ToolError("Dieser Befehl ist aus Sicherheitsgründen gesperrt.")
             workdir = self.resolve(cwd) if cwd else self.settings.workspace
             return _run(command, shell=True, timeout=min(timeout, 1800), cwd=workdir)
+
+    def _register_web(self) -> None:
+        # Kostenlose Websuche ohne Schlüssel (DuckDuckGo). Mit Claude übernimmt die serverseitige Suche.
+        @self.add("web_search", (
+            "Suche im Internet (DuckDuckGo). Liefert Titel, Link und Kurztext der Treffer. "
+            "Für Details danach die passende Seite mit web_fetch lesen."
+        ), _obj({
+            "query": {"type": "string", "description": "Suchbegriffe"},
+            "max_results": {"type": "integer", "description": "Anzahl Treffer (Standard 6, max. 15)"},
+        }, ["query"]))
+        def web_search(query: str, max_results: int = 6) -> str:
+            data = urllib.parse.urlencode({"q": query, "kl": "de-de"}).encode()
+            page, _ = _http_get("https://html.duckduckgo.com/html/", data=data)
+            results = parse_ddg_results(page, max(1, min(max_results, 15)))
+            if not results:
+                raise ToolError("Keine Treffer (oder die Suche ist gerade nicht erreichbar). "
+                                "Andere Suchbegriffe versuchen oder eine bekannte Seite direkt mit web_fetch lesen.")
+            return "\n\n".join(f"{i}. {r['title']}\n   {r['url']}\n   {r['snippet']}"
+                               for i, r in enumerate(results, 1))
+
+        @self.add("web_fetch", (
+            "Lade eine Webseite (http/https) und gib ihren lesbaren Text zurück."
+        ), _obj({
+            "url": {"type": "string"},
+            "max_chars": {"type": "integer", "description": "Maximale Textlänge (Standard 20000)"},
+        }, ["url"]))
+        def web_fetch(url: str, max_chars: int = 20_000) -> str:
+            if urllib.parse.urlparse(url).scheme not in {"http", "https"}:
+                raise ToolError("Nur http- und https-Adressen sind erlaubt.")
+            page, content_type = _http_get(url)
+            if "html" in content_type or page.lstrip()[:15].lower().startswith(("<!doctype", "<html")):
+                title, text = html_to_text(page)
+                page = (f"# {title}\n\n" if title else "") + text
+            return _truncate(page, max(500, min(max_chars, MAX_RESULT_CHARS)))
 
     def _register_phone(self) -> None:
         @self.add("open", (

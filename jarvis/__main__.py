@@ -1,33 +1,32 @@
-"""Startpunkt: ``python -m jarvis [serve|chat|reflect|profile]``."""
+"""Startpunkt: ``python -m jarvis [serve|chat|reflect|profile|models]``."""
 
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 
 from .brain import Brain
-from .config import settings
+from .config import PROVIDERS, settings
+from .llm import LLMError, make_backend
 
 
-def _check_key() -> None:
-    if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
-        print(
-            "Kein API-Schlüssel gefunden.\n"
-            f"Lege die Datei {settings.data_dir / '.env'} an mit:\n"
-            "  ANTHROPIC_API_KEY=sk-ant-...\n"
-            "Schlüssel gibt es unter https://console.anthropic.com/",
-            file=sys.stderr,
-        )
+def _check_setup() -> None:
+    problem = settings.setup_problem()
+    if problem:
+        print(problem, file=sys.stderr)
         sys.exit(1)
 
 
 def _make_jarvis():
     from .agent import Jarvis
 
-    _check_key()
+    _check_setup()
     settings.ensure_dirs()
-    return Jarvis(Brain(settings.db_path, settings.brain_dir), settings)
+    try:
+        return Jarvis(Brain(settings.db_path, settings.brain_dir), settings)
+    except LLMError as exc:
+        print(exc, file=sys.stderr)
+        sys.exit(1)
 
 
 def cmd_serve(args) -> None:
@@ -96,6 +95,20 @@ def cmd_reflect(args) -> None:
                 print(f"#{conv['id']} {result['title']}: +{len(result['new_facts'])} Fakten")
 
 
+def cmd_models(args) -> None:
+    _check_setup()
+    info = PROVIDERS[settings.provider]
+    print(f"Anbieter: {info.label}   eingestellt: {settings.model}\n")
+    try:
+        models = make_backend(settings).list_models()
+    except LLMError as exc:
+        print(exc, file=sys.stderr)
+        sys.exit(1)
+    for model in models:
+        print(("* " if model.removeprefix("models/") == settings.model else "  ") + model)
+    print("\nÄndern mit JARVIS_MODEL=... in", settings.data_dir / ".env")
+
+
 def cmd_profile(args) -> None:
     settings.ensure_dirs()
     brain = Brain(settings.db_path, settings.brain_dir)
@@ -111,8 +124,9 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("chat", help="Im Terminal chatten")
     sub.add_parser("reflect", help="Aus allen Gesprächen lernen")
     sub.add_parser("profile", help="Zeigen, was Jarvis über dich weiß")
+    sub.add_parser("models", help="Verfügbare Modelle des Anbieters anzeigen")
     args = parser.parse_args(argv)
-    handlers = {"chat": cmd_chat, "reflect": cmd_reflect, "profile": cmd_profile}
+    handlers = {"chat": cmd_chat, "reflect": cmd_reflect, "profile": cmd_profile, "models": cmd_models}
     if args.cmd is None:
         args.host = args.port = None
     handlers.get(args.cmd, cmd_serve)(args)

@@ -1,1 +1,5 @@
-anthropic>=1.8,<2
+# Für die kostenlosen Anbieter (Google Gemini, Groq, OpenRouter, Mistral, Ollama)
+# braucht Jarvis keine Zusatzpakete – nur Python 3.10+.
+#
+# Für Claude (Anthropic, kostenpflichtig) zusätzlich:
+#   pip install -r requirements-claude.txt

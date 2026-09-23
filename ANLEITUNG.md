@@ -17,14 +17,26 @@ einrichtest, startest, aktualisierst und wieder beendest. Was Jarvis kann, steht
 
 ## 1. Was du brauchst
 
-- Einen **Anthropic API-Schlüssel**: <https://console.anthropic.com/> → *API Keys* → *Create Key*.
-  Der Schlüssel beginnt mit `sk-ant-`. Die Nutzung kostet Geld pro Anfrage, lade also etwas
-  Guthaben auf (*Billing*).
-- **Handy:** Android 7 oder neuer, ca. 1,5 GB freier Speicher, WLAN für die Installation.
+- Einen **API-Schlüssel** für ein KI-Modell. Kostenlos geht es zum Beispiel so:
+
+  **Google Gemini (empfohlen):**
+  1. <https://aistudio.google.com/apikey> öffnen und mit einem Google-Konto anmelden.
+  2. **„API-Schlüssel erstellen“** (*Create API key*) tippen.
+  3. Den Schlüssel kopieren. Eine Kreditkarte ist nicht nötig.
+
+  Andere kostenlose Anbieter: [Groq](https://console.groq.com/keys),
+  [OpenRouter](https://openrouter.ai/keys), [Mistral](https://console.mistral.ai/api-keys).
+  Claude ([Anthropic](https://console.anthropic.com/)) ist kostenpflichtig (ab 5 € Guthaben),
+  liefert aber die beste Qualität. Eine Übersicht steht im [README](README.md#welches-ki-modell).
+- **Handy:** Android 7 oder neuer, ca. 500 MB freier Speicher (mit Claude ca. 1,5 GB), WLAN für die Installation.
 - **PC:** Python 3.10 oder neuer und Git.
 
 > **Den Schlüssel niemals weitergeben oder ins Repository hochladen.** Er steht nur in
 > `~/jarvis-data/.env`, und diese Datei liegt außerhalb des Projektordners.
+
+> **Kostenlose Kontingente haben Limits** (Anfragen pro Minute und pro Tag). Ist das Limit
+> erreicht, meldet Jarvis das und du wartest kurz bzw. bis zum nächsten Tag. Manche Anbieter
+> dürfen Eingaben aus dem kostenlosen Kontingent zur Verbesserung ihrer Modelle verwenden.
 
 ---
 
@@ -65,12 +77,17 @@ bash ~/Jarvis/install-termux.sh
 
 Das Skript:
 
-1. installiert Python, Git, Rust und `termux-api`,
-2. installiert die Python-Pakete (der erste Durchlauf dauert **10–20 Minuten**, weil einige
-   Pakete für Android gebaut werden – Bildschirm anlassen bzw. Termux im Vordergrund lassen),
-3. fragt nach Zugriff auf den Handyspeicher → im Dialog **Erlauben** tippen,
-4. fragt nach deinem **API-Schlüssel** und deinem **Namen** und speichert beides in `~/jarvis-data/.env`,
-5. legt den Befehl `jarvis` und eine Verknüpfung für Termux:Widget an.
+1. installiert Python, Git und `termux-api`,
+2. fragt nach Zugriff auf den Handyspeicher → im Dialog **Erlauben** tippen,
+3. fragt, welches **KI-Modell** du nutzen willst (Enter = Google Gemini, kostenlos),
+4. fragt nach deinem **API-Schlüssel** und deinem **Namen** und speichert alles in `~/jarvis-data/.env`,
+5. nur bei Claude: installiert zusätzlich Rust und das Paket `anthropic` (dauert **10–20 Minuten**,
+   Bildschirm anlassen bzw. Termux im Vordergrund lassen),
+6. legt den Befehl `jarvis` und eine Verknüpfung für Termux:Widget an.
+
+**Anbieter später wechseln:** `nano ~/jarvis-data/.env` öffnen, `JARVIS_PROVIDER=` ändern und den
+passenden Schlüssel eintragen (z. B. `GROQ_API_KEY=...`). Beim Wechsel zu Claude danach
+`bash ~/Jarvis/install-termux.sh` erneut ausführen, damit das nötige Paket installiert wird.
 
 ### 2.4 Akku-Optimierung ausschalten
 
@@ -120,21 +137,22 @@ Virtuelle Umgebung aktivieren:
 | Windows (PowerShell) | `.venv\Scripts\Activate.ps1` |
 | Windows (cmd) | `.venv\Scripts\activate.bat` |
 
-Dann:
+Für die kostenlosen Anbieter sind keine Zusatzpakete nötig. Nur für Claude:
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-claude.txt
 ```
 
-### 3.2 API-Schlüssel eintragen
+### 3.2 Anbieter und API-Schlüssel eintragen
 
-Am bequemsten dauerhaft über die Einstellungsdatei:
+Am bequemsten dauerhaft über die Einstellungsdatei (darin `JARVIS_PROVIDER` und den passenden
+Schlüssel eintragen, z. B. `JARVIS_PROVIDER=gemini` und `GEMINI_API_KEY=...`):
 
 ```bash
 # Linux / macOS
 mkdir -p ~/jarvis-data
 cp .env.example ~/jarvis-data/.env
-nano ~/jarvis-data/.env        # ANTHROPIC_API_KEY=sk-ant-... eintragen
+nano ~/jarvis-data/.env        # Anbieter und Schlüssel eintragen
 ```
 
 ```powershell
@@ -145,8 +163,7 @@ notepad $HOME\jarvis-data\.env
 ```
 
 Alternativ nur für die aktuelle Sitzung:
-`export ANTHROPIC_API_KEY=sk-ant-...` (Linux/macOS) bzw.
-`$env:ANTHROPIC_API_KEY="sk-ant-..."` (PowerShell).
+`export GEMINI_API_KEY=...` (Linux/macOS) bzw. `$env:GEMINI_API_KEY="..."` (PowerShell).
 
 ### 3.3 Starten
 
@@ -160,6 +177,27 @@ Auf dem PC gibt es keinen `jarvis`-Befehl – überall, wo in dieser Anleitung `
 nimmst du `python -m jarvis …` (im Projektordner, mit aktivierter virtueller Umgebung).
 Handyfunktionen wie Taschenlampe oder Vorlesen gibt es nur in Termux.
 
+### 3.4 Komplett kostenlos und privat: lokales Modell mit Ollama
+
+Mit [Ollama](https://ollama.com) läuft das KI-Modell auf deinem eigenen PC – ohne Schlüssel,
+ohne Limits, und deine Daten verlassen dein Netz nicht. Das Handy ist dafür zu schwach, der PC
+sollte mindestens 8 GB Arbeitsspeicher haben (besser 16 GB).
+
+1. Ollama installieren und ein Modell laden, das Werkzeuge unterstützt:
+   ```bash
+   ollama pull llama3.1
+   ```
+2. **Jarvis auf demselben PC:** in `~/jarvis-data/.env` `JARVIS_PROVIDER=ollama` setzen, fertig.
+3. **Jarvis auf dem Handy, Modell auf dem PC:** Ollama im WLAN freigeben (Umgebungsvariable
+   `OLLAMA_HOST=0.0.0.0` setzen und Ollama neu starten) und auf dem Handy eintragen:
+   ```
+   JARVIS_PROVIDER=ollama
+   JARVIS_BASE_URL=http://<IP-des-PCs>:11434/v1
+   ```
+
+Kleine lokale Modelle sind spürbar weniger zuverlässig als die großen Online-Modelle,
+vor allem bei längeren Aufgaben mit Dateien und Code.
+
 ---
 
 ## 4. Jarvis benutzen
@@ -172,6 +210,7 @@ Handyfunktionen wie Taschenlampe oder Vorlesen gibt es nur in Termux.
 | `jarvis chat` | Im Terminal chatten – `/neu` neues Gespräch, `/lernen` jetzt lernen, `/exit` beenden |
 | `jarvis profile` | Zeigen, was Jarvis über dich weiß |
 | `jarvis reflect` | Aus allen bisherigen Gesprächen lernen |
+| `jarvis models` | Verfügbare Modelle deines Anbieters anzeigen (das eingestellte ist mit `*` markiert) |
 
 **Erster Schritt:** Tippe im Chat auf *„Lass uns ein Kennenlern-Interview machen“*.
 
@@ -195,8 +234,8 @@ nano ~/jarvis-data/.env
 ```
 
 Danach Jarvis neu starten. Alle Einstellungen sind im [README](README.md#einstellungen) erklärt.
-Beispiele: `JARVIS_EFFORT=low` macht Jarvis schneller und günstiger, `JARVIS_ALLOW_SHELL=0`
-verbietet Shell-Befehle.
+Beispiele: `JARVIS_MODEL=...` wählt ein anderes Modell, `JARVIS_REFLECT_EVERY=12` spart
+Anfragen (Jarvis lernt seltener im Hintergrund), `JARVIS_ALLOW_SHELL=0` verbietet Shell-Befehle.
 
 ---
 
@@ -207,7 +246,7 @@ verbietet Shell-Befehle.
 ```bash
 cd ~/Jarvis
 git pull
-pip install -r requirements.txt
+bash install-termux.sh     # auf dem PC nur bei Claude: pip install -r requirements-claude.txt
 ```
 
 Deine Daten in `~/jarvis-data/` bleiben dabei erhalten.
@@ -237,23 +276,29 @@ rm -rf ~/jarvis-data     # löscht auch dein Gedächtnis – vorher sichern!
 
 | Problem | Lösung |
 |---|---|
-| `Kein API-Schlüssel gefunden` | `~/jarvis-data/.env` prüfen: Zeile `ANTHROPIC_API_KEY=sk-ant-...` ohne Leerzeichen und ohne Anführungszeichen. |
+| `Kein API-Schlüssel für … gefunden` | `~/jarvis-data/.env` prüfen: `JARVIS_PROVIDER` und der passende Schlüssel (z. B. `GEMINI_API_KEY=...`) ohne Leerzeichen und ohne Anführungszeichen. |
+| `Unbekannter Anbieter` | Bei `JARVIS_PROVIDER` einen dieser Werte eintragen: `gemini`, `groq`, `openrouter`, `mistral`, `ollama`, `anthropic`, `openai`. |
+| `Kostenloses Limit erreicht oder zu viele Anfragen` | Kurz warten bzw. bis zum nächsten Tag. Oder einen zweiten Anbieter einrichten und `JARVIS_PROVIDER` wechseln. `JARVIS_REFLECT_EVERY=12` spart Anfragen. |
+| `Modell '…' nicht gefunden` | Anbieter haben ihr Modell-Angebot geändert: `jarvis models` zeigt die verfügbaren Modelle, eines davon bei `JARVIS_MODEL` eintragen. |
+| `API-Schlüssel ungültig` | Schlüssel neu kopieren (ohne Leerzeichen am Ende) oder beim Anbieter einen neuen erstellen. |
+| Fehler beim Senden von Fotos | Nicht jedes Modell versteht Bilder. Gemini kann es; bei Groq, Mistral und OpenRouter ein Modell mit Bildunterstützung wählen. |
+| Jarvis ruft Werkzeuge falsch auf oder antwortet seltsam | Kleine bzw. kostenlose Modelle sind weniger zuverlässig. Ein größeres Modell wählen (`jarvis models`) oder den Anbieter wechseln. |
 | `jarvis: command not found` | Installationsskript nochmal ausführen: `bash ~/Jarvis/install-termux.sh`. |
-| Installation bricht beim Bauen von `pydantic-core` / `jiter` ab | `pkg install -y rust binutils` und dann `pip install -r ~/Jarvis/requirements.txt` erneut ausführen. Genug freien Speicher sicherstellen. |
+| `Für Claude fehlt das Paket 'anthropic'` | `bash ~/Jarvis/install-termux.sh` ausführen (auf dem PC: `pip install -r requirements-claude.txt`). |
+| Installation bricht beim Bauen von `pydantic-core` / `jiter` ab (nur Claude) | `pkg install -y rust binutils` und dann `pip install -r ~/Jarvis/requirements-claude.txt` erneut ausführen. Genug freien Speicher sicherstellen. |
 | `pkg`-Fehler wie „repository is under maintenance“ | `termux-change-repo` ausführen und einen anderen Spiegelserver wählen. |
 | Browser öffnet sich nicht | Chrome selbst öffnen: `http://127.0.0.1:8765`. |
 | `Address already in use` | Jarvis läuft schon (anderes Termux-Fenster) – dort beenden, oder anderen Port nehmen: `jarvis serve --port 8766`. |
 | Handybefehle (Taschenlampe, Vorlesen …) hängen oder tun nichts | App **Termux:API** aus F-Droid installieren und ihr in den Android-Einstellungen die nötigen Berechtigungen geben. |
 | Jarvis ist nach einer Weile nicht mehr erreichbar | Akku-Optimierung für Termux ausschalten (Abschnitt 2.4). |
 | Kein Zugriff auf Fotos/Downloads | `termux-setup-storage` ausführen und erlauben. |
-| Fehler `401` / `authentication_error` | API-Schlüssel ist falsch oder gelöscht – neuen Schlüssel in `.env` eintragen. |
-| Fehler `credit balance is too low` | Guthaben in der Anthropic Console aufladen. |
-| Fehler `not_found_error` zum Modell | In `~/jarvis-data/.env` bei `JARVIS_MODEL` ein aktuelles Modell eintragen (Liste in der Anthropic-Dokumentation). |
+| Websuche findet nichts | Die kostenlose Suche (DuckDuckGo) blockt manchmal kurzzeitig. Später nochmal versuchen oder Jarvis bitten, eine bestimmte Seite direkt zu lesen. |
+| `Keine Verbindung zu http://…:11434` (Ollama) | Läuft Ollama auf dem PC? Ist `OLLAMA_HOST=0.0.0.0` gesetzt und stimmt die IP in `JARVIS_BASE_URL`? |
 
-**Funktioniert die Installation?** Das kannst du ohne API-Schlüssel prüfen:
+**Funktioniert die Installation?** Das kannst du ohne API-Schlüssel und ohne Internet prüfen:
 
 ```bash
 cd ~/Jarvis && python -m unittest discover -s tests
 ```
 
-Am Ende sollte `OK` stehen.
+Am Ende sollte `OK` stehen (ohne Claude-Paket mit dem Zusatz `skipped=3` – das ist in Ordnung).
