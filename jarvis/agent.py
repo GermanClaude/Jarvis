@@ -2,20 +2,17 @@
 
 from __future__ import annotations
 
-import json
 import threading
 import time
 from typing import Callable
 
-import anthropic
-
 from .brain import FACT_CATEGORIES, Brain
 from .config import Settings
+from .llm import LLMError, make_backend
 from .tools import Toolbox
 
 Emit = Callable[[str, dict], None]
 
-FALLBACK_BETA = "server-side-fallback-2026-07-01"
 MAX_STEPS = 40
 CONTEXT_MARK = "<kontext>"
 
@@ -83,26 +80,19 @@ def trim_history(messages: list[dict], limit: int) -> list[dict]:
 
 
 class Jarvis:
-    def __init__(self, brain: Brain, settings: Settings, client: anthropic.Anthropic | None = None) -> None:
+    def __init__(self, brain: Brain, settings: Settings, client=None, backend=None) -> None:
+        """``client``: optionaler Anthropic-Client (Tests); ``backend``: beliebiges Modell-Backend."""
         self.brain = brain
         self.settings = settings
         self.toolbox = Toolbox(brain, settings)
-        self.client = client or anthropic.Anthropic()
+        self.backend = backend or make_backend(settings, client)
         self._conv_locks: dict[int, threading.Lock] = {}
         self._locks_guard = threading.Lock()
         self._reflecting: set[int] = set()
 
     # ------------------------------------------------------------ Anfrage
-    def _tools(self) -> list[dict]:
-        tools = self.toolbox.definitions()
-        if self.settings.web_tools:
-            tools += [
-                {"type": "web_search_20260209", "name": "web_search"},
-                {"type": "web_fetch_20260209", "name": "web_fetch"},
-            ]
-        return tools
-
-    def _system(self) -> list[dict]:
+    def _system(self) -> tuple[str, str]:
+        """(fester Persona-Teil, veränderliches Profil) – getrennt, damit Claude den ersten Teil cachen kann."""
         name = f"Der Nutzer heißt {self.settings.user_name}.\n\n" if self.settings.user_name else ""
         profile = (
             "# Was du über deinen Nutzer weißt (Langzeitgedächtnis)\n"
@@ -114,10 +104,7 @@ class Jarvis:
                 f"- {time.strftime('%d.%m.%Y', time.localtime(e['created']))}: {e['summary']}"
                 for e in reversed(episodes)
             )
-        return [
-            {"type": "text", "text": PERSONA, "cache_control": {"type": "ephemeral"}},
-            {"type": "text", "text": profile},
-        ]
+        return PERSONA, profile
 
     def _context_block(self, user_text: str) -> dict:
         now = time.strftime("%A, %d.%m.%Y, %H:%M Uhr")
@@ -132,21 +119,6 @@ class Jarvis:
             lines += [f"- #{t['id']} {t['title']}" + (f" (fällig {t['due']})" if t["due"] else "") for t in tasks]
         lines.append("</kontext>")
         return {"type": "text", "text": "\n".join(lines)}
-
-    def _request_kwargs(self) -> dict:
-        kwargs: dict = {
-            "model": self.settings.model,
-            "max_tokens": 64000,
-            "system": self._system(),
-            "tools": self._tools(),
-            "thinking": {"type": "adaptive", "display": "summarized"},
-            "output_config": {"effort": self.settings.effort},
-            "cache_control": {"type": "ephemeral"},
-        }
-        if self.settings.fallbacks:
-            kwargs["betas"] = [FALLBACK_BETA]
-            kwargs["fallbacks"] = "default"
-        return kwargs
 
     def _lock_for(self, conv_id: int) -> threading.Lock:
         with self._locks_guard:
@@ -185,7 +157,7 @@ class Jarvis:
         json_retries = 0
         for _ in range(MAX_STEPS):
             try:
-                response = self._stream_turn(messages, emit)
+                turn = self.backend.stream_turn(self._system(), messages, self.toolbox.definitions(), emit)
                 json_retries = 0
             except ValueError:
                 # Tool-Eingabe war kein gültiges JSON – Runde (begrenzt) wiederholen.
@@ -194,45 +166,38 @@ class Jarvis:
                     emit("error", {"message": "Antwort konnte nicht gelesen werden. Bitte nochmal versuchen."})
                     return
                 continue
-            except anthropic.AuthenticationError:
-                emit("error", {"message": "API-Schlüssel ungültig. Prüfe ANTHROPIC_API_KEY."})
-                return
-            except anthropic.RateLimitError:
-                emit("error", {"message": "Zu viele Anfragen – kurz warten und nochmal versuchen."})
-                return
-            except anthropic.APIStatusError as exc:
-                emit("error", {"message": f"API-Fehler {exc.status_code}: {exc.message}"})
-                return
-            except anthropic.APIConnectionError:
-                emit("error", {"message": "Keine Verbindung zur API. Internet prüfen."})
+            except LLMError as exc:
+                emit("error", {"message": str(exc)})
                 return
 
-            assistant_content = [block.to_dict() for block in response.content]
-            messages.append({"role": "assistant", "content": assistant_content})
-            self.brain.add_message(conv_id, "assistant", assistant_content)
+            if turn.content:
+                messages.append({"role": "assistant", "content": turn.content})
+                self.brain.add_message(conv_id, "assistant", turn.content)
 
-            if response.stop_reason == "pause_turn":
+            if turn.stop_reason == "pause_turn":
                 continue
-            if response.stop_reason == "refusal":
+            if turn.stop_reason == "refusal":
                 emit("error", {"message": "Diese Anfrage wurde aus Sicherheitsgründen abgelehnt."})
                 return
 
-            tool_uses = [b for b in response.content if b.type == "tool_use"]
+            tool_uses = [b for b in turn.content if b.get("type") == "tool_use"]
             if not tool_uses:
-                if response.stop_reason == "max_tokens":
+                if turn.stop_reason == "max_tokens":
                     emit("error", {"message": "Antwort war zu lang und wurde abgeschnitten."})
+                elif not turn.content:
+                    emit("error", {"message": "Das Modell hat nichts geantwortet. Bitte nochmal versuchen."})
                 emit("done", {"conversation_id": conv_id})
                 return
-            if response.stop_reason == "max_tokens":
+            if turn.stop_reason == "max_tokens":
                 emit("error", {"message": "Tool-Eingabe wurde abgeschnitten – bitte Aufgabe aufteilen."})
                 return
 
             results = []
             for block in tool_uses:
-                output, is_error = self.toolbox.execute(block.name, block.input)
-                emit("tool_result", {"id": block.id, "name": block.name, "ok": not is_error,
+                output, is_error = self.toolbox.execute(block["name"], block["input"])
+                emit("tool_result", {"id": block["id"], "name": block["name"], "ok": not is_error,
                                      "preview": output[:400]})
-                result = {"type": "tool_result", "tool_use_id": block.id, "content": output}
+                result = {"type": "tool_result", "tool_use_id": block["id"], "content": output}
                 if is_error:
                     result["is_error"] = True
                 results.append(result)
@@ -240,23 +205,6 @@ class Jarvis:
             self.brain.add_message(conv_id, "user", results)
 
         emit("error", {"message": f"Nach {MAX_STEPS} Schritten angehalten."})
-
-    def _stream_turn(self, messages: list[dict], emit: Emit):
-        with self.client.beta.messages.stream(messages=messages, **self._request_kwargs()) as stream:
-            for event in stream:
-                if event.type == "text":
-                    emit("text", {"delta": event.text})
-                elif event.type == "thinking":
-                    emit("thinking", {"delta": event.thinking})
-                elif event.type == "content_block_start":
-                    block = event.content_block
-                    if block.type in {"tool_use", "server_tool_use"}:
-                        emit("tool", {"id": block.id, "name": block.name})
-                elif event.type == "content_block_stop":
-                    block = getattr(event, "content_block", None)
-                    if block is not None and block.type in {"tool_use", "server_tool_use"}:
-                        emit("tool_input", {"id": block.id, "name": block.name, "input": block.input})
-            return stream.get_final_message()
 
     # ------------------------------------------------------------ Lernen
     def _maybe_reflect(self, conv_id: int) -> None:
@@ -333,37 +281,37 @@ class Jarvis:
             "required": ["new_facts", "updated_facts", "obsolete_fact_ids", "episode_summary", "title"],
             "additionalProperties": False,
         }
-        kwargs: dict = {
-            "model": self.settings.model,
-            "max_tokens": 16000,
-            "messages": [{"role": "user", "content": prompt}],
-            "output_config": {"effort": self.settings.reflect_effort,
-                              "format": {"type": "json_schema", "schema": schema}},
-        }
-        if self.settings.fallbacks:
-            kwargs["betas"] = [FALLBACK_BETA]
-            kwargs["fallbacks"] = "default"
-        try:
-            response = self.client.beta.messages.create(**kwargs)
-        except anthropic.APIError:
-            return None
-        if response.stop_reason in {"refusal", "max_tokens"}:
-            return None
-        text = next((b.text for b in response.content if b.type == "text"), "")
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError:
+        data = self.backend.complete_json(prompt, schema)
+        if data is None:
             return None
 
-        for fact in data["new_facts"]:
-            self.brain.add_fact(fact["content"], fact["category"])
-        for fact in data["updated_facts"]:
-            self.brain.update_fact(fact["id"], fact["content"])
-        for fact_id in data["obsolete_fact_ids"]:
+        def ids(values) -> list[int]:
+            out = []
+            for value in values if isinstance(values, list) else []:
+                try:
+                    out.append(int(value))
+                except (TypeError, ValueError):
+                    pass
+            return out
+
+        new_facts = [f for f in data.get("new_facts") or [] if isinstance(f, dict) and str(f.get("content", "")).strip()]
+        updated = [f for f in data.get("updated_facts") or [] if isinstance(f, dict) and str(f.get("content", "")).strip()]
+        for fact in new_facts:
+            self.brain.add_fact(str(fact["content"]), str(fact.get("category", "sonstiges")))
+        for fact in updated:
+            for fact_id in ids([fact.get("id")]):
+                self.brain.update_fact(fact_id, str(fact["content"]))
+        obsolete = ids(data.get("obsolete_fact_ids"))
+        for fact_id in obsolete:
             self.brain.delete_fact(fact_id)
-        if data["episode_summary"].strip():
-            self.brain.add_episode(data["episode_summary"], conv_id)
-        if data["title"].strip():
-            self.brain.rename_conversation(conv_id, data["title"].strip())
+        summary = str(data.get("episode_summary") or "").strip()
+        title = str(data.get("title") or "").strip()
+        if summary:
+            self.brain.add_episode(summary, conv_id)
+        if title:
+            self.brain.rename_conversation(conv_id, title[:80])
+        data = {"new_facts": new_facts, "updated_facts": updated,
+                "obsolete_fact_ids": obsolete,
+                "episode_summary": summary, "title": title}
         self.brain.mark_reflected(conv_id, len(all_messages))
         return data

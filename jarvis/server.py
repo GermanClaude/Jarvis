@@ -61,6 +61,7 @@ class Api:
     # ------------------------------------------------------------ Handler
     def status(self, h, m):
         return {
+            "provider": self.settings.provider,
             "model": self.settings.model,
             "workspace": str(self.settings.workspace),
             "shell": self.settings.allow_shell,
@@ -285,6 +286,7 @@ def serve(jarvis: Jarvis, settings: Settings) -> None:
     print(f"\n  JARVIS ist online  →  {url}")
     if settings.token:
         print(f"  Zugangscode: {settings.token}")
+    print(f"  Modell: {settings.model} ({settings.provider})")
     print(f"  Daten: {settings.data_dir}   Arbeitsordner: {settings.workspace}")
     print("  Beenden mit Strg+C\n")
     try:
