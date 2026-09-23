@@ -18,6 +18,8 @@ Apps öffnen. Das Denken übernimmt Claude (Anthropic API).
 
 ## Installation auf Android
 
+> Ausführliche Schritt-für-Schritt-Anleitung (Termux, PC, Updates, Backup, Fehlerbehebung): **[ANLEITUNG.md](ANLEITUNG.md)**
+
 1. **Termux** und **Termux:API** aus [F-Droid](https://f-droid.org) installieren
    (die Play-Store-Version von Termux ist veraltet). Optional: **Termux:Widget** für ein Homescreen-Symbol.
 2. API-Schlüssel holen: <https://console.anthropic.com/> → *API Keys*.
