@@ -1,0 +1,12 @@
+{
+  "name": "JARVIS",
+  "short_name": "Jarvis",
+  "description": "Dein persönlicher KI-Assistent und Second Brain",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#05090f",
+  "theme_color": "#05090f",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

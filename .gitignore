@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.env
+.venv/
+jarvis-data/
+.pytest_cache/
