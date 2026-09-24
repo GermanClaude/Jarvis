@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Personensuche in öffentlichen, legalen Quellen: Wikipedia, Wikidata, Deutsche Nationalbibliothek, Nachrichten, Publikationen, Archive – plus Rückwärts-Bildersuche.">
+<title>Personensuche</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234fd1ff' stroke-width='2'%3E%3Ccircle cx='10' cy='8' r='4'/%3E%3Cpath d='M3 21a7 7 0 0 1 12-5'/%3E%3Ccircle cx='18' cy='17' r='3'/%3E%3Cpath d='m20.5 19.5 2 2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="10" cy="8" r="4"/><path d="M3 21a7 7 0 0 1 12-5"/><circle cx="18" cy="17" r="3"/><path d="m20.5 19.5 2 2"/></svg>
+    <div>
+      <h1>Personensuche</h1>
+      <p>Öffentliche, legale Quellen – kein Datenhandel, keine Leaks, keine Gesichtserkennung</p>
+    </div>
+  </div>
+  <button class="icon-btn" id="themeBtn" title="Hell/Dunkel umschalten" aria-label="Hell/Dunkel umschalten">◐</button>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button role="tab" class="tab active" data-tab="name" aria-selected="true">Nach Name suchen</button>
+  <button role="tab" class="tab" data-tab="image" aria-selected="false">Mit Bild suchen</button>
+</nav>
+
+<main>
+  <!-- ======================================================= Namenssuche -->
+  <section id="tab-name" class="tab-panel active">
+    <form id="nameForm" class="search" autocomplete="off">
+      <input id="nameInput" type="search" placeholder="Name, z. B. Marie Curie" required minlength="3" aria-label="Name">
+      <input id="ctxInput" type="search" placeholder="Zusatz (optional): Beruf, Ort, Firma …" aria-label="Zusatz">
+      <button class="btn primary" type="submit">Suchen</button>
+    </form>
+    <p class="hint">Tipp: Bei häufigen Namen hilft ein Zusatz wie „Physikerin“, „Berlin“ oder ein Firmenname.
+      Namensgleichheit ist normal – prüfe bei jedem Treffer, ob wirklich dieselbe Person gemeint ist.</p>
+
+    <div id="candidates" class="candidates" hidden></div>
+    <div id="results"></div>
+  </section>
+
+  <!-- ======================================================= Bildsuche -->
+  <section id="tab-image" class="tab-panel">
+    <div class="card">
+      <h2>Rückwärts-Bildersuche</h2>
+      <p>Findet heraus, <strong>wo genau dieses Bild</strong> (oder sehr ähnliche Versionen davon) im Internet
+        veröffentlicht ist – z. B. in einem Zeitungsartikel, auf Wikipedia oder einer Firmenseite. Dort steht dann
+        meist auch, wer abgebildet ist.</p>
+      <div id="drop" class="drop" tabindex="0">
+        <input id="fileInput" type="file" accept="image/*" hidden>
+        <img id="preview" alt="" hidden>
+        <span id="dropText">Bild hierher ziehen, einfügen (Strg+V) oder <u>auswählen</u></span>
+      </div>
+      <div class="or">oder</div>
+      <input id="urlInput" class="field" type="url" placeholder="Bild-Adresse (https://…/bild.jpg)">
+      <div id="imageActions" class="engine-grid"></div>
+      <p class="hint" id="imageHint"></p>
+    </div>
+
+    <div class="card notice">
+      <h3>Warum keine Gesichtserkennung?</h3>
+      <p>Dienste, die ein Gesicht mit Millionen fremder Fotos abgleichen (z. B. PimEyes, FaceCheck.ID oder Yandex'
+        Gesichtssuche), sind hier bewusst <strong>nicht</strong> eingebaut. Gesichtsmerkmale sind nach der DSGVO
+        (Art. 9) besonders geschützte biometrische Daten, und solche Suchen werden häufig zum Stalken oder Bloßstellen
+        von Privatpersonen missbraucht. Diese Seite sucht deshalb nur nach <em>demselben Bild</em>, nicht nach
+        <em>demselben Gesicht</em>.</p>
+    </div>
+
+    <div class="card">
+      <h3>Namen gefunden?</h3>
+      <form id="handoverForm" class="search">
+        <input id="handoverInput" type="search" placeholder="Gefundenen Namen eintragen" minlength="3" required>
+        <button class="btn primary" type="submit">Person suchen</button>
+      </form>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <p>Alle Daten stammen live aus öffentlich zugänglichen Quellen (Wikipedia, Wikidata, Deutsche Nationalbibliothek via lobid.org,
+    OpenAlex, ORCID, GDELT, Internet Archive). Die Suche läuft vollständig in deinem Browser; nichts wird gespeichert.
+    Nutze die Ergebnisse verantwortungsvoll: Informationen über Privatpersonen zu sammeln, sie zu belästigen oder
+    bloßzustellen kann strafbar sein (u. a. § 238 StGB Nachstellung, DSGVO).</p>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -147,3 +147,10 @@ Tests ausführen: `python -m unittest discover -s tests`
 - Proaktive Erinnerungen per Benachrichtigung (Termux:Job / Cron)
 - Kalender, E-Mail, Messenger anbinden
 - Wake-Word („Hey Jarvis“) und dauerhaftes Zuhören
+
+---
+
+## Extra: Personensuche (eigenständige Website)
+
+Im Ordner [`personensuche/`](personensuche/) liegt ein separates Projekt: eine Personensuchmaschine als reine
+HTML-Website, die über GitHub Pages gehostet werden kann. Details: [personensuche/README.md](personensuche/README.md).
