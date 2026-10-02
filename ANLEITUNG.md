@@ -9,9 +9,10 @@ einrichtest, startest, aktualisierst und wieder beendest. Was Jarvis kann, steht
 1. [Was du brauchst](#1-was-du-brauchst)
 2. [Android mit Termux](#2-android-mit-termux)
 3. [PC: Linux, macOS, Windows](#3-pc-linux-macos-windows)
-4. [Jarvis benutzen](#4-jarvis-benutzen)
-5. [Aktualisieren, sichern, deinstallieren](#5-aktualisieren-sichern-deinstallieren)
-6. [Probleme lösen](#6-probleme-lösen)
+4. [JARVIS am PC: Sprachsteuerung und PC-Steuerung](#4-jarvis-am-pc-sprachsteuerung-und-pc-steuerung)
+5. [Jarvis benutzen](#5-jarvis-benutzen)
+6. [Aktualisieren, sichern, deinstallieren](#6-aktualisieren-sichern-deinstallieren)
+7. [Probleme lösen](#7-probleme-lösen)
 
 ---
 
@@ -200,7 +201,165 @@ vor allem bei längeren Aufgaben mit Dateien und Code.
 
 ---
 
-## 4. Jarvis benutzen
+## 4. JARVIS am PC: Sprachsteuerung und PC-Steuerung
+
+Am PC wird Jarvis zum echten Sprachassistenten: Du sagst **„Hey Jarvis“**, sprichst ganz normal
+weiter – Fragen, Ideen, Aufträge – und Jarvis antwortet laut, so ausführlich wie nötig, wie in
+einem richtigen Gespräch. Auf Wunsch steuert er dabei deinen PC mit Maus und Tastatur, sieht
+deine Bildschirme, öffnet Programme und erledigt Dinge für dich. Ein Jarvis-Fenster im
+Iron-Man-Look zeigt das Gespräch – auf dem Bildschirm, der gerade frei ist.
+
+Am besten läuft das unter **Windows**. Hinweise zu Linux und macOS stehen in Abschnitt 4.7.
+
+### 4.1 Einrichten (Windows)
+
+1. **Python 3.12** von <https://www.python.org/downloads/> installieren und im ersten
+   Installationsfenster **„Add python.exe to PATH“** anhaken.
+2. **Jarvis herunterladen:** auf GitHub *Code → Download ZIP* und z. B. nach `C:\Jarvis` entpacken
+   (oder mit Git: `git clone https://github.com/GermanClaude/Jarvis.git C:\Jarvis`).
+3. Im Ordner `windows` doppelt auf **`setup.bat`** klicken. Das Skript
+   - legt eine eigene Python-Umgebung an und installiert alles (ca. 1 GB, dauert ein paar Minuten),
+   - fragt, ob Claude (Premium) mit installiert werden soll,
+   - öffnet die Einstellungsdatei `%USERPROFILE%\jarvis-data\.env` im Editor.
+4. In der Einstellungsdatei eintragen und speichern:
+   ```
+   JARVIS_PROVIDER=gemini
+   GEMINI_API_KEY=dein-schlüssel
+   JARVIS_PC_CONTROL=1
+   ```
+   `JARVIS_PC_CONTROL=1` erlaubt Jarvis Maus, Tastatur und Bildschirm. Damit Jarvis den Bildschirm
+   **sehen** kann, braucht es ein Modell, das Bilder versteht: **Gemini** (kostenlos) oder
+   **Claude** (Premium, Abschnitt 4.5). Groq und die meisten kostenlosen OpenRouter-Modelle können das nicht.
+
+   **Komplett kostenlos und ohne Limits** geht es nur mit einem lokalen Modell über **Ollama**
+   (Abschnitt 3.4): Es läuft auf deinem eigenen PC, ohne Schlüssel und ohne Kontingent. Dafür
+   braucht der PC eine gute Grafikkarte, und kleine lokale Modelle sind weniger zuverlässig als
+   Gemini oder Claude. Für die PC-Steuerung ein Modell wählen, das auf <https://ollama.com/search>
+   als **vision** und **tools** gekennzeichnet ist, und eintragen:
+   `JARVIS_PROVIDER=ollama` und `JARVIS_MODEL=<modellname>`.
+5. **Starten:** doppelt auf **`windows\jarvis-voice.bat`** klicken. Beim ersten Start wird das
+   Spracherkennungsmodell einmalig heruntergeladen (ca. 500 MB). Sobald „Bereit. Sag ‚Hey Jarvis‘“
+   erscheint, hört Jarvis zu. Das schwarze Konsolenfenster kannst du minimieren, aber nicht schließen.
+6. **Mit Windows starten (optional):** doppelt auf **`windows\autostart.bat`** klicken – ab dann
+   startet Jarvis bei jeder Anmeldung minimiert im Hintergrund.
+
+### 4.2 So redest du mit Jarvis
+
+- **„Hey Jarvis“** sagen → ein kurzer Ton → einfach lossprechen. Eine Sprechpause von etwa einer
+  Sekunde beendet deinen Satz.
+- Jarvis **antwortet laut** und schreibt die Antwort zusätzlich ins Jarvis-Fenster. Es gibt keine
+  festen Befehle oder Textbausteine – du redest mit derselben KI wie im Chat, frei und so
+  ausführlich, wie du willst.
+- **Weiterreden ohne „Hey Jarvis“:** Nach jeder Antwort hört Jarvis noch 6 Sekunden zu – so wird
+  daraus ein echtes Gespräch. Danach braucht es wieder „Hey Jarvis“.
+- **Beenden:** „Danke, das war's“, „Stopp“ oder einfach nichts mehr sagen.
+
+Beispiele:
+
+- „Hey Jarvis, erklär mir, wie ein Elektroauto-Akku funktioniert.“
+- „Hey Jarvis, öffne Spotify und spiel meine Lieblings-Playlist.“
+- „Hey Jarvis, was steht gerade auf meinem zweiten Bildschirm?“
+- „Hey Jarvis, schreib meinem Chef eine Mail, dass ich morgen später komme.“ (Jarvis fragt vor dem Absenden.)
+- „Hey Jarvis, mach leiser.“ · „… sperr den PC.“ · „… such mir die günstigsten Flüge nach Rom im Mai.“
+
+Ohne Wake-Word (Enter drücken, dann sprechen): `windows\jarvis-voice.bat --no-wake`
+
+### 4.3 Das Jarvis-Fenster
+
+Bei „Hey Jarvis“ erscheint ein Fenster mit animiertem Arc-Reactor, Status (*hört zu*, *denkt nach*,
+*arbeitet*, *spricht*) und dem ganzen Gespräch.
+
+- **Welcher Bildschirm?** Bei mehreren Monitoren der, auf dem am wenigsten los ist – am liebsten
+  einer, auf dem nur der Desktop zu sehen ist.
+- **Nie vor Vollbild:** Läuft auf einem Bildschirm ein Spiel oder Video im Vollbild, öffnet sich das
+  Fenster dort nicht. Sind alle Bildschirme im Vollbild, bleibt es ganz zu – Jarvis spricht dann nur.
+- **Stiehlt keinen Fokus:** Das Fenster nimmt dir nie die Tastatur weg und minimiert kein Spiel.
+- Mit der Maus verschieben; schließen mit ✕, Doppelklick oder Esc. Nach 20 Sekunden Ruhe blendet es sich aus.
+
+| Einstellung | Wirkung |
+|---|---|
+| `JARVIS_WINDOW=auto` | Standard: freier Bildschirm, nie vor Vollbild |
+| `JARVIS_WINDOW=off` | Kein Fenster – Jarvis läuft unsichtbar im Hintergrund und spricht nur (auch: `jarvis-voice.bat --no-window`) |
+| `JARVIS_WINDOW=2` | Immer auf Bildschirm 2 (außer dort läuft etwas im Vollbild) |
+| `JARVIS_WINDOW_HIDE_SECONDS=0` | Fenster bleibt offen, bis du es schließt |
+
+### 4.4 Was Jarvis am PC kann – und wo die Grenzen sind
+
+Mit `JARVIS_PC_CONTROL=1` hat Jarvis praktisch dieselben Möglichkeiten wie du mit Maus und Tastatur:
+
+| Fähigkeit | Beispiele |
+|---|---|
+| Bildschirm sehen | jeden Monitor einzeln, um zu verstehen, was gerade offen ist |
+| Maus | klicken, doppelklicken, Rechtsklick, ziehen, scrollen – überall |
+| Tastatur | Text tippen (auch Umlaute), Tasten und Kürzel wie `Strg+C`, `Alt+Tab`, `Win+D` |
+| Programme & Fenster | Programme starten, Fenster nach vorne holen, minimieren, maximieren |
+| System | Lautstärke, Musik steuern, PC sperren, Zwischenablage, Systeminfos |
+| Dateien & Befehle | Dateien lesen/schreiben/verschieben, Befehle in der Eingabeaufforderung, Python ausführen |
+| Internet | im Web suchen und Seiten lesen – oder einfach den Browser bedienen |
+
+**Sicherheit – bitte lesen:**
+
+- **Notbremse:** Ziehst du die Maus ganz in eine **Bildschirmecke**, bricht Jarvis die laufende
+  Maus- oder Tastaturaktion sofort ab. Komplett beenden: im Jarvis-Konsolenfenster **Strg+C**.
+- **Jarvis fragt nach**, bevor er Nachrichten oder E-Mails abschickt, etwas kauft oder bezahlt,
+  Dateien löscht oder Systemeinstellungen ändert. Ein „Ja“ genügt.
+- **Keine Passwörter:** Jarvis tippt keine Passwörter ein. Der Grund: Alles, was Jarvis sieht
+  (Bildschirmfotos) und tippt, geht an den KI-Anbieter. Lass beim Arbeiten mit Jarvis nichts
+  Vertrauliches offen – bei kostenlosen Anbietern können Eingaben auch zum Training genutzt werden.
+- **Grenzen von Windows:** Administrator-Abfragen (die abgedunkelte „Möchten Sie zulassen …“-Abfrage)
+  kann kein Programm anklicken – die bestätigst du selbst. Spiele mit Anti-Cheat ignorieren
+  simulierte Eingaben oft.
+
+### 4.5 Premium: Claude als Modell
+
+Mit Claude bekommst du die stärkste KI für lange Gespräche und schwierige Aufgaben am PC.
+
+1. Bei <https://console.anthropic.com/> Guthaben aufladen (ab 5 €) und einen API-Schlüssel erstellen.
+   Tipp: dort auch ein **monatliches Ausgabenlimit** setzen.
+2. Beim Einrichten (`setup.bat`) die Frage nach Claude mit **j** beantworten – oder später
+   `windows\setup.bat` nochmal ausführen.
+3. In `%USERPROFILE%\jarvis-data\.env`:
+   ```
+   JARVIS_PROVIDER=anthropic
+   ANTHROPIC_API_KEY=sk-ant-...
+   ```
+
+Standardmodell ist **Claude Opus 5.5** (`claude-opus-5-5`, 4 $ pro Million Eingabe- und 20 $ pro
+Million Ausgabe-Tokens). Günstiger und schneller: `JARVIS_MODEL=claude-sonnet-5-5` (2 $ / 10 $).
+Jedes Bildschirmfoto kostet etwa so viel wie eine Textseite – PC-Steuerung ist also teurer als
+reines Reden. Mit `JARVIS_EFFORT=medium` oder `low` antwortet Jarvis schneller und günstiger.
+
+### 4.6 Einstellungen für Sprache und PC
+
+| Variable | Standard | Bedeutung |
+|---|---|---|
+| `JARVIS_PC_CONTROL` | `0` | `1` = Jarvis darf Maus, Tastatur, Bildschirm und Fenster steuern |
+| `JARVIS_STT_MODEL` | `small` | Spracherkennung: `tiny`, `base`, `small`, `medium`, `large-v3` (größer = genauer, aber langsamer) |
+| `JARVIS_LANGUAGE` | `de` | Sprache für die Spracherkennung |
+| `JARVIS_TTS` | `edge` | Stimme: `edge` (natürlich, braucht Internet), `system` (Windows-Stimme, offline), `off` |
+| `JARVIS_TTS_VOICE` | `de-DE-ConradNeural` | z. B. `de-DE-KillianNeural`, `de-DE-KatjaNeural`, `de-DE-AmalaNeural` |
+| `JARVIS_WAKE_THRESHOLD` | `0.5` | Kleiner = reagiert leichter auf „Hey Jarvis“, größer = weniger Fehlalarme |
+| `JARVIS_FOLLOWUP_SECONDS` | `6` | So lange hört Jarvis nach einer Antwort ohne Wake-Word weiter zu (`0` = aus) |
+| `JARVIS_WINDOW` | `auto` | Jarvis-Fenster, siehe 4.3 |
+| `JARVIS_WINDOW_HIDE_SECONDS` | `20` | Fenster nach so vielen Sekunden Ruhe ausblenden (`0` = nie) |
+
+Mikrofon wählen: `python -m jarvis voice --list-devices` zeigt alle Geräte,
+`windows\jarvis-voice.bat --device 3` nimmt Gerät Nummer 3.
+
+### 4.7 Linux und macOS
+
+- **Linux:** vorher `sudo apt install libportaudio2 python3-tk`. Für das Wake-Word **Python 3.11**
+  verwenden (ein benötigtes Paket gibt es unter Linux für 3.12 noch nicht). PC-Steuerung funktioniert
+  nur mit X11, nicht mit Wayland. Das Fenster erscheint immer auf dem Hauptbildschirm.
+- **macOS:** Dem Terminal unter *Systemeinstellungen → Datenschutz & Sicherheit* die Rechte
+  **Mikrofon**, **Bedienungshilfen** und **Bildschirmaufnahme** geben.
+
+Installation dort: `pip install -r requirements-voice.txt -r requirements-pc.txt`, starten mit
+`python -m jarvis voice`.
+
+---
+
+## 5. Jarvis benutzen
 
 | Befehl | Was passiert |
 |---|---|
@@ -239,7 +398,7 @@ Anfragen (Jarvis lernt seltener im Hintergrund), `JARVIS_ALLOW_SHELL=0` verbiete
 
 ---
 
-## 5. Aktualisieren, sichern, deinstallieren
+## 6. Aktualisieren, sichern, deinstallieren
 
 **Aktualisieren:**
 
@@ -272,7 +431,7 @@ rm -rf ~/jarvis-data     # löscht auch dein Gedächtnis – vorher sichern!
 
 ---
 
-## 6. Probleme lösen
+## 7. Probleme lösen
 
 | Problem | Lösung |
 |---|---|
@@ -293,6 +452,14 @@ rm -rf ~/jarvis-data     # löscht auch dein Gedächtnis – vorher sichern!
 | Jarvis ist nach einer Weile nicht mehr erreichbar | Akku-Optimierung für Termux ausschalten (Abschnitt 2.4). |
 | Kein Zugriff auf Fotos/Downloads | `termux-setup-storage` ausführen und erlauben. |
 | Websuche findet nichts | Die kostenlose Suche (DuckDuckGo) blockt manchmal kurzzeitig. Später nochmal versuchen oder Jarvis bitten, eine bestimmte Seite direkt zu lesen. |
+| „Hey Jarvis“ wird nicht erkannt | Deutlich „Hey Jarvis“ sagen. `JARVIS_WAKE_THRESHOLD=0.3` setzen. Richtiges Mikrofon? `python -m jarvis voice --list-devices`, dann `--device <Nummer>`. Notfalls `--no-wake` nutzen. |
+| Jarvis versteht mich falsch | Genauere Spracherkennung: `JARVIS_STT_MODEL=medium`. Ruhiger sprechen, Mikrofon näher. |
+| Stimme klingt plötzlich roboterhaft | Die Online-Stimme war nicht erreichbar, Jarvis nutzt die Windows-Stimme. Internet prüfen und Jarvis neu starten. |
+| Jarvis hört sich selbst | Kopfhörer nutzen oder Lautsprecher leiser stellen. |
+| Jarvis-Fenster erscheint nicht | Läuft etwas im Vollbild? Dann bleibt es absichtlich zu. Sonst `JARVIS_WINDOW=1` bzw. `2` setzen. |
+| Jarvis kann Maus/Tastatur nicht nutzen | `JARVIS_PC_CONTROL=1` in der `.env`? `windows\setup.bat` erneut ausführen. |
+| Fehler beim Bildschirmfoto bzw. „Modell kann keine Bilder“ | Ein Modell mit Bildverständnis nutzen: Gemini oder Claude. |
+| `PortAudio library not found` (Linux) | `sudo apt install libportaudio2` |
 | `Keine Verbindung zu http://…:11434` (Ollama) | Läuft Ollama auf dem PC? Ist `OLLAMA_HOST=0.0.0.0` gesetzt und stimmt die IP in `JARVIS_BASE_URL`? |
 
 **Funktioniert die Installation?** Das kannst du ohne API-Schlüssel und ohne Internet prüfen:

@@ -18,7 +18,7 @@ CONTEXT_MARK = "<kontext>"
 
 PERSONA = """Du bist JARVIS – der persönliche KI-Assistent und das Second Brain deines Nutzers, \
 inspiriert von Tony Starks JARVIS: loyal, vorausschauend, kompetent, ruhig, mit trockenem, \
-feinem Humor. Du läufst auf seinem Handy und hast echte Werkzeuge.
+feinem Humor. Du läufst auf seinem Handy oder PC und hast echte Werkzeuge.
 
 # Deine Aufgabe
 1. **Second Brain sein.** Du baust über die Zeit ein vollständiges Bild deines Nutzers auf: \
@@ -69,6 +69,17 @@ def _is_plain_user(message: dict) -> bool:
     return isinstance(content, str) or all(b.get("type") != "tool_result" for b in content)
 
 
+def drop_tool_images(messages: list[dict]) -> None:
+    """Ersetzt Bilder in älteren Tool-Ergebnissen durch Text – spart Tokens, nur das neueste Bild zählt."""
+    for message in messages:
+        if message["role"] != "user" or isinstance(message["content"], str):
+            continue
+        for block in message["content"]:
+            if block.get("type") == "tool_result" and isinstance(block.get("content"), list):
+                text = "\n".join(b.get("text", "") for b in block["content"] if b.get("type") == "text")
+                block["content"] = f"{text}\n[älteres Bild entfernt]"
+
+
 def trim_history(messages: list[dict], limit: int) -> list[dict]:
     """Kürzt den Verlauf, ohne ein Tool-Paar zu zerreißen: Start immer bei einer echten Nutzernachricht."""
     if len(messages) <= limit:
@@ -106,9 +117,11 @@ class Jarvis:
             )
         return PERSONA, profile
 
-    def _context_block(self, user_text: str) -> dict:
+    def _context_block(self, user_text: str, hint: str | None = None) -> dict:
         now = time.strftime("%A, %d.%m.%Y, %H:%M Uhr")
         lines = [CONTEXT_MARK, f"Jetzt: {now}", f"Arbeitsordner: {self.settings.workspace}"]
+        if hint:
+            lines.append(hint)
         hits = self.brain.search(user_text, limit=5)
         if hits:
             lines.append("Möglicherweise relevante Erinnerungen:")
@@ -126,8 +139,11 @@ class Jarvis:
 
     # ------------------------------------------------------------ Chat
     def chat(self, conv_id: int | None, user_text: str, images: list[dict] | None = None,
-             emit: Emit = lambda e, d: None) -> int:
-        """Eine Nutzernachricht verarbeiten. Streamt Ereignisse über ``emit``."""
+             emit: Emit = lambda e, d: None, hint: str | None = None) -> int:
+        """Eine Nutzernachricht verarbeiten. Streamt Ereignisse über ``emit``.
+
+        ``hint`` landet im Kontext-Block, z. B. dass die Antwort vorgelesen wird.
+        """
         if conv_id is None or self.brain.conversation(conv_id) is None:
             conv_id = self.brain.new_conversation(user_text.strip()[:60] or "Neues Gespräch")
         emit("meta", {"conversation_id": conv_id})
@@ -137,15 +153,16 @@ class Jarvis:
             emit("error", {"message": "In diesem Gespräch läuft bereits eine Anfrage."})
             return conv_id
         try:
-            self._chat_locked(conv_id, user_text, images or [], emit)
+            self._chat_locked(conv_id, user_text, images or [], emit, hint)
         finally:
             lock.release()
         self._maybe_reflect(conv_id)
         return conv_id
 
-    def _chat_locked(self, conv_id: int, user_text: str, images: list[dict], emit: Emit) -> None:
+    def _chat_locked(self, conv_id: int, user_text: str, images: list[dict], emit: Emit,
+                     hint: str | None = None) -> None:
         history = trim_history(self.brain.messages(conv_id), self.settings.history_messages)
-        context = self._context_block(user_text)
+        context = self._context_block(user_text, hint)
         text_block = {"type": "text", "text": user_text}
 
         live_content = [context, *images, text_block]
@@ -192,17 +209,27 @@ class Jarvis:
                 emit("error", {"message": "Tool-Eingabe wurde abgeschnitten – bitte Aufgabe aufteilen."})
                 return
 
-            results = []
+            results, stored = [], []
             for block in tool_uses:
-                output, is_error = self.toolbox.execute(block["name"], block["input"])
+                output, is_error, tool_images = self.toolbox.execute_full(block["name"], block["input"])
                 emit("tool_result", {"id": block["id"], "name": block["name"], "ok": not is_error,
                                      "preview": output[:400]})
                 result = {"type": "tool_result", "tool_use_id": block["id"], "content": output}
                 if is_error:
                     result["is_error"] = True
+                stored.append(dict(result))
+                if tool_images:
+                    # Bilder (z. B. Bildschirmfotos) nur live mitschicken – gespeichert wird ein Platzhalter.
+                    result["content"] = [{"type": "text", "text": output}] + [
+                        {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}}
+                        for media_type, data in tool_images
+                    ]
+                    stored[-1]["content"] = f"{output}\n[{len(tool_images)} Bild(er), nicht gespeichert]"
                 results.append(result)
+            if any(isinstance(r["content"], list) for r in results):
+                drop_tool_images(messages)
             messages.append({"role": "user", "content": results})
-            self.brain.add_message(conv_id, "user", results)
+            self.brain.add_message(conv_id, "user", stored)
 
         emit("error", {"message": f"Nach {MAX_STEPS} Schritten angehalten."})
 

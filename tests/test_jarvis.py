@@ -204,6 +204,10 @@ class AgentTests(unittest.TestCase):
         second = fake.requests[1]
         self.assertEqual(second["messages"][-1]["content"][0]["type"], "tool_result")
         self.assertEqual(second["fallbacks"], "default")
+        # Jarvis baut den Verlauf neu → ungültige Denkblöcke verwerfen statt 400.
+        self.assertEqual(second["thinking"]["block_binding"], {"prefix_mismatch_behavior": "drop_block"})
+        self.assertEqual(sorted(second["betas"]),
+                         ["server-side-fallback-2026-07-01", "thinking-binding-controls-2026-08-01"])
         self.assertEqual(second["model"], "claude-opus-5")
         # Das Profil im System-Prompt ist beim zweiten Aufruf schon aktualisiert.
         self.assertIn("Heißt Nathanael", second["system"][1]["text"])

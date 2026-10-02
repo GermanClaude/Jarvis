@@ -46,7 +46,7 @@ class Provider:
 # Reihenfolge = Priorität bei der automatischen Erkennung über gesetzte Schlüssel.
 PROVIDERS: dict[str, Provider] = {
     "anthropic": Provider("Claude (Anthropic)", "", ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
-                          "claude-opus-5", "https://console.anthropic.com/", False),
+                          "claude-opus-5-5", "https://console.anthropic.com/", False),
     "gemini": Provider("Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai",
                        ("GEMINI_API_KEY", "GOOGLE_API_KEY"), "gemini-flash-latest",
                        "https://aistudio.google.com/apikey", True),
@@ -105,6 +105,21 @@ class Settings:
         self.allow_shell = _flag("JARVIS_ALLOW_SHELL", True)
         self.reflect_every = int(os.environ.get("JARVIS_REFLECT_EVERY", "6"))
         self.history_messages = int(os.environ.get("JARVIS_HISTORY_MESSAGES", "60"))
+
+        # PC steuern (Maus, Tastatur, Bildschirm) – nur wenn ausdrücklich eingeschaltet.
+        self.pc_control = _flag("JARVIS_PC_CONTROL", False)
+
+        # Sprachsteuerung ("jarvis voice").
+        self.language = os.environ.get("JARVIS_LANGUAGE", "de")
+        self.wake_word = os.environ.get("JARVIS_WAKE_WORD", "hey_jarvis")
+        self.wake_threshold = float(os.environ.get("JARVIS_WAKE_THRESHOLD", "0.5"))
+        self.stt_model = os.environ.get("JARVIS_STT_MODEL", "small")
+        self.tts = os.environ.get("JARVIS_TTS", "edge").lower()
+        self.tts_voice = os.environ.get("JARVIS_TTS_VOICE", "de-DE-ConradNeural")
+        self.followup_seconds = float(os.environ.get("JARVIS_FOLLOWUP_SECONDS", "6"))
+        # Jarvis-Fenster: auto (freier Bildschirm, nie vor Vollbild), off oder Monitor-Nummer (1, 2, …)
+        self.window = os.environ.get("JARVIS_WINDOW", "auto").strip().lower()
+        self.window_hide_seconds = float(os.environ.get("JARVIS_WINDOW_HIDE_SECONDS", "20"))
 
         self.host = os.environ.get("JARVIS_HOST", "127.0.0.1")
         self.port = int(os.environ.get("JARVIS_PORT", "8765"))

@@ -1,4 +1,4 @@
-"""Startpunkt: ``python -m jarvis [serve|chat|reflect|profile|models]``."""
+"""Startpunkt: ``python -m jarvis [serve|chat|voice|reflect|profile|models]``."""
 
 from __future__ import annotations
 
@@ -86,6 +86,24 @@ def cmd_chat(args) -> None:
         jarvis.reflect(conv_id)
 
 
+def cmd_voice(args) -> None:
+    from . import voice
+
+    device = int(args.device) if args.device and args.device.isdigit() else args.device
+    if args.no_window:
+        settings.window = "off"
+    try:
+        if args.list_devices:
+            print(voice.list_devices())
+            return
+        voice.run_voice(_make_jarvis(), settings, device=device, push_to_talk=args.no_wake)
+    except RuntimeError as exc:
+        print(exc, file=sys.stderr)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        print("\nJarvis hört nicht mehr zu. Bis bald.")
+
+
 def cmd_reflect(args) -> None:
     jarvis = _make_jarvis()
     for conv in jarvis.brain.conversations():
@@ -122,11 +140,16 @@ def main(argv: list[str] | None = None) -> None:
     p_serve.add_argument("--host")
     p_serve.add_argument("--port", type=int)
     sub.add_parser("chat", help="Im Terminal chatten")
+    p_voice = sub.add_parser("voice", help="Sprachsteuerung: 'Hey Jarvis' (PC)")
+    p_voice.add_argument("--no-wake", action="store_true", help="Ohne Wake-Word: Enter drücken, dann sprechen")
+    p_voice.add_argument("--no-window", action="store_true", help="Ohne Jarvis-Fenster, nur Sprache")
+    p_voice.add_argument("--device", help="Mikrofon (Nummer oder Name, siehe --list-devices)")
+    p_voice.add_argument("--list-devices", action="store_true", help="Audiogeräte anzeigen")
     sub.add_parser("reflect", help="Aus allen Gesprächen lernen")
     sub.add_parser("profile", help="Zeigen, was Jarvis über dich weiß")
     sub.add_parser("models", help="Verfügbare Modelle des Anbieters anzeigen")
     args = parser.parse_args(argv)
-    handlers = {"chat": cmd_chat, "reflect": cmd_reflect, "profile": cmd_profile, "models": cmd_models}
+    handlers = {"chat": cmd_chat, "voice": cmd_voice, "reflect": cmd_reflect, "profile": cmd_profile, "models": cmd_models}
     if args.cmd is None:
         args.host = args.port = None
     handlers.get(args.cmd, cmd_serve)(args)

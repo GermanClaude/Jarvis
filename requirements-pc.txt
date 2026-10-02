@@ -1,0 +1,6 @@
+# PC-Steuerung: Maus, Tastatur, Bildschirm, Fenster (JARVIS_PC_CONTROL=1)
+#   pip install -r requirements-pc.txt
+pyautogui>=0.9.54
+pillow
+pyperclip
+pygetwindow; sys_platform == "win32"

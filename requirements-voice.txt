@@ -1,0 +1,9 @@
+# Sprachsteuerung am PC: "Hey Jarvis" (jarvis voice)
+#   pip install -r requirements-voice.txt
+openwakeword>=0.6        # Wake-Word "Hey Jarvis" (offline)
+faster-whisper>=1.0      # Spracherkennung (offline)
+sounddevice>=0.4         # Mikrofon und Lautsprecher
+numpy
+edge-tts>=6              # natürliche Stimme (online, kostenlos)
+miniaudio>=1.59          # spielt die Stimme ab
+pyttsx3>=2.90            # Systemstimme als Ersatz (offline)

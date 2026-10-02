@@ -2,11 +2,15 @@
 
 Jedes Tool hat ein JSON-Schema (für das Sprachmodell) und eine Python-Funktion (die es ausführt).
 Handy-Funktionen laufen über Termux:API und melden sich sauber ab, wenn sie fehlen.
+PC-Steuerung (Maus, Tastatur, Bildschirm) läuft über pyautogui und ist nur mit
+JARVIS_PC_CONTROL=1 aktiv.
 """
 
 from __future__ import annotations
 
+import base64
 import fnmatch
+import io
 import html
 import json
 import os
@@ -23,6 +27,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Callable
 
+from . import screens
 from .brain import FACT_CATEGORIES, Brain
 from .config import Settings
 
@@ -41,6 +46,14 @@ BLOCKED_SHELL_PATTERNS = [
 
 class ToolError(Exception):
     """Fehler, der als verständliche Meldung an das Modell zurückgeht."""
+
+
+@dataclass
+class ToolOutput:
+    """Ergebnis mit Bildern (z. B. Bildschirmfoto). ``images``: Liste von (Medientyp, Base64-Daten)."""
+
+    text: str
+    images: list[tuple[str, str]]
 
 
 @dataclass
@@ -204,6 +217,35 @@ def parse_ddg_results(page: str, limit: int) -> list[dict]:
     return results
 
 
+def _launch_program(name: str) -> str:
+    """Startet ein Programm auf dem PC (Windows: wie Win+R, macOS: open -a, Linux: direkt)."""
+    try:
+        if sys.platform == "win32":
+            subprocess.Popen(["cmd", "/c", "start", "", name], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", "-a", name])
+        else:
+            subprocess.Popen([name], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (OSError, ValueError) as exc:
+        raise ToolError(f"Konnte '{name}' nicht starten: {exc}. Alternative: keyboard hotkey 'win', "
+                        "Programmnamen tippen, Enter.")
+    return f"Gestartet: {name} (mit screenshot prüfen, ob es geöffnet ist)"
+
+
+def _gui():
+    """pyautogui laden (nur auf dem PC, mit requirements-pc.txt)."""
+    screens.make_dpi_aware()
+    try:
+        import pyautogui
+    except ImportError:
+        raise ToolError("PC-Steuerung braucht Zusatzpakete: pip install -r requirements-pc.txt")
+    except Exception as exc:  # noqa: BLE001 – z. B. kein Bildschirm (Server, Termux)
+        raise ToolError(f"PC-Steuerung nicht verfügbar: {exc}")
+    pyautogui.FAILSAFE = True  # Maus in eine Bildschirmecke ziehen bricht alles ab
+    pyautogui.PAUSE = 0.05
+    return pyautogui
+
+
 def _is_termux() -> bool:
     return "com.termux" in os.environ.get("PREFIX", "") or shutil.which("termux-info") is not None
 
@@ -222,6 +264,9 @@ class Toolbox:
         self.brain = brain
         self.settings = settings
         self.tools: dict[str, Tool] = {}
+        # Bildschirmfoto-Koordinaten → echte Bildschirm-Koordinaten (Verkleinerung und Monitor-Position)
+        self._screen_scale = 1.0
+        self._screen_offset = (0, 0)
         self._register_all()
 
     # ------------------------------------------------------------ Hilfen
@@ -245,18 +290,26 @@ class Toolbox:
 
     def execute(self, name: str, args: object) -> tuple[str, bool]:
         """Führt ein Tool aus. Rückgabe: (Ergebnistext, ist_fehler)."""
+        text, is_error, _ = self.execute_full(name, args)
+        return text, is_error
+
+    def execute_full(self, name: str, args: object) -> tuple[str, bool, list[tuple[str, str]]]:
+        """Wie ``execute``, liefert zusätzlich Bilder: (Ergebnistext, ist_fehler, Bilder)."""
         tool = self.tools.get(name)
         if tool is None:
-            return f"Unbekanntes Tool: {name}", True
+            return f"Unbekanntes Tool: {name}", True, []
         problem = validate(tool.schema, args)
         if problem:
-            return json.dumps({"INVALID_INPUT": problem, "received": args}, ensure_ascii=False), True
+            return json.dumps({"INVALID_INPUT": problem, "received": args}, ensure_ascii=False), True, []
         try:
-            return _truncate(tool.func(**args)), False
+            result = tool.func(**args)
         except ToolError as exc:
-            return str(exc), True
+            return str(exc), True, []
         except Exception as exc:  # noqa: BLE001 – Fehler gehen als Text an das Modell zurück
-            return f"{type(exc).__name__}: {exc}", True
+            return f"{type(exc).__name__}: {exc}", True, []
+        if isinstance(result, ToolOutput):
+            return _truncate(result.text), False, result.images
+        return _truncate(result), False, []
 
     # ------------------------------------------------------------ Registrierung
     def _register_all(self) -> None:
@@ -266,6 +319,8 @@ class Toolbox:
         self._register_phone()
         if self.settings.web_tools:
             self._register_web()
+        if self.settings.pc_control:
+            self._register_pc()
 
     def _register_memory(self) -> None:
         b = self.brain
@@ -553,10 +608,197 @@ class Toolbox:
                 page = (f"# {title}\n\n" if title else "") + text
             return _truncate(page, max(500, min(max_chars, MAX_RESULT_CHARS)))
 
+    def _register_pc(self) -> None:
+        careful = (" Vorsicht: Vor dem Absenden von Nachrichten/E-Mails, Käufen, Zahlungen, Löschen oder "
+                   "Systemeinstellungen den Nutzer ausdrücklich fragen. Niemals Passwörter eintippen.")
+
+        def point(x: int, y: int) -> tuple[int, int]:
+            left, top = self._screen_offset
+            return left + round(x * self._screen_scale), top + round(y * self._screen_scale)
+
+        @self.add("screenshot", (
+            "Mache ein Bildschirmfoto vom PC und sieh es dir an. Nutze das, bevor du mit mouse/keyboard "
+            "handelst, und danach zur Kontrolle. Koordinaten für mouse beziehen sich auf das letzte Bild. "
+            "Bei mehreren Bildschirmen: 'monitor' wählt einen (1 = Hauptbildschirm); ohne Angabe der, "
+            "auf dem das aktive Fenster liegt."
+        ), _obj({
+            "monitor": {"type": "integer", "description": "Bildschirm-Nummer (1, 2, …)"},
+        }, []))
+        def screenshot(monitor: int = 0) -> ToolOutput:
+            gui = _gui()
+            monitors = screens.monitors(tuple(gui.size()))
+            if monitor:
+                target = next((m for m in monitors if m.number == monitor), None)
+                if target is None:
+                    raise ToolError(f"Bildschirm {monitor} gibt es nicht (vorhanden: 1–{len(monitors)}).")
+            else:
+                active = next((w for w in screens.windows() if w.foreground), None)
+                target = max(monitors, key=lambda m: (active.rect.overlap(m.rect) if active else 0, m.primary))
+            r = target.rect
+            try:
+                from PIL import ImageGrab
+
+                if sys.platform == "win32":
+                    image = ImageGrab.grab(bbox=(r.left, r.top, r.right, r.bottom), all_screens=True)
+                else:
+                    image = ImageGrab.grab()
+            except (ImportError, OSError):
+                image = gui.screenshot()
+            width, height = image.size
+            self._screen_offset = (r.left, r.top)
+            self._screen_scale = max(1.0, width / 1280)
+            if self._screen_scale > 1.0:
+                image = image.resize((round(width / self._screen_scale), round(height / self._screen_scale)))
+            buffer = io.BytesIO()
+            image.convert("RGB").save(buffer, format="JPEG", quality=70)
+            mx, my = gui.position()
+            text = (f"Bildschirm {target.number} von {len(monitors)}, Bild {image.size[0]}x{image.size[1]} "
+                    f"(echt {width}x{height}).")
+            if r.left <= mx < r.right and r.top <= my < r.bottom:
+                text += (f" Maus bei ({round((mx - r.left) / self._screen_scale)}, "
+                         f"{round((my - r.top) / self._screen_scale)}).")
+            return ToolOutput(text, [("image/jpeg", base64.b64encode(buffer.getvalue()).decode())])
+
+        @self.add("mouse", (
+            "Steuere die Maus am PC. Koordinaten (x, y) aus dem letzten screenshot. "
+            "Aktionen: move, click, double_click, right_click, drag (von x,y nach to_x,to_y), "
+            "scroll (amount: positiv = hoch, negativ = runter)." + careful
+        ), _obj({
+            "action": {"type": "string", "enum": ["move", "click", "double_click", "right_click", "drag", "scroll"]},
+            "x": {"type": "integer"},
+            "y": {"type": "integer"},
+            "to_x": {"type": "integer"},
+            "to_y": {"type": "integer"},
+            "amount": {"type": "integer", "description": "Scroll-Schritte (Standard 5)"},
+        }, ["action"]))
+        def mouse(action: str, x: int | None = None, y: int | None = None, to_x: int | None = None,
+                  to_y: int | None = None, amount: int = 5) -> str:
+            gui = _gui()
+            needs_point = action in {"move", "drag"}
+            if needs_point and (x is None or y is None):
+                raise ToolError(f"Für '{action}' werden x und y gebraucht.")
+            pos = point(x, y) if x is not None and y is not None else None
+            if action == "move":
+                gui.moveTo(*pos, duration=0.2)
+            elif action in {"click", "double_click", "right_click"}:
+                kwargs = {"x": pos[0], "y": pos[1]} if pos else {}
+                {"click": gui.click, "double_click": gui.doubleClick, "right_click": gui.rightClick}[action](**kwargs)
+            elif action == "drag":
+                if to_x is None or to_y is None:
+                    raise ToolError("Für 'drag' werden to_x und to_y gebraucht.")
+                gui.moveTo(*pos, duration=0.2)
+                gui.dragTo(*point(to_x, to_y), duration=0.5, button="left")
+            elif action == "scroll":
+                if pos:
+                    gui.moveTo(*pos, duration=0.1)
+                gui.scroll(amount * (120 if sys.platform == "win32" else 1))
+            return f"Maus: {action} ausgeführt."
+
+        @self.add("keyboard", (
+            "Tastatur am PC: 'type' tippt Text (auch Umlaute) ins aktive Fenster, 'press' drückt eine Taste "
+            "(z. B. enter, tab, esc, backspace, win, f5, volumeup, playpause), 'hotkey' drückt eine "
+            "Kombination wie 'ctrl+c', 'alt+tab', 'win+d', 'ctrl+shift+esc'." + careful
+        ), _obj({
+            "action": {"type": "string", "enum": ["type", "press", "hotkey"]},
+            "text": {"type": "string", "description": "Text für type"},
+            "keys": {"type": "string", "description": "Taste bzw. Kombination für press/hotkey"},
+            "times": {"type": "integer", "description": "Wie oft die Taste gedrückt wird (Standard 1)"},
+        }, ["action"]))
+        def keyboard(action: str, text: str = "", keys: str = "", times: int = 1) -> str:
+            gui = _gui()
+            if action == "type":
+                if text.isascii():
+                    gui.write(text, interval=0.01)
+                else:  # pyautogui tippt keine Umlaute – über die Zwischenablage einfügen
+                    import pyperclip
+                    pyperclip.copy(text)
+                    gui.hotkey("command" if sys.platform == "darwin" else "ctrl", "v")
+                return f"Getippt: {len(text)} Zeichen."
+            names = [k.strip().lower() for k in keys.replace(" ", "").split("+") if k.strip()]
+            if not names:
+                raise ToolError("'keys' fehlt.")
+            unknown = [k for k in names if k not in gui.KEYBOARD_KEYS]
+            if unknown:
+                raise ToolError(f"Unbekannte Taste(n): {unknown}")
+            for _ in range(max(1, min(times, 50))):
+                if action == "hotkey":
+                    gui.hotkey(*names)
+                else:
+                    gui.press(names[0])
+            return f"Gedrückt: {keys}"
+
+        @self.add("windows", (
+            "Fenster am PC: 'list' zeigt offene Fenster, 'activate' holt ein Fenster nach vorne, "
+            "'minimize'/'maximize' – jeweils per Teil des Fenstertitels (nur Windows)."
+        ), _obj({
+            "action": {"type": "string", "enum": ["list", "activate", "minimize", "maximize"]},
+            "title": {"type": "string"},
+        }, ["action"]))
+        def windows(action: str, title: str = "") -> str:
+            _gui()
+            try:
+                import pygetwindow
+                all_windows = [w for w in pygetwindow.getAllWindows() if w.title.strip()]
+            except (ImportError, NotImplementedError, AttributeError):
+                raise ToolError("Fensterverwaltung gibt es nur unter Windows. Alternative: keyboard hotkey 'alt+tab'.")
+            if action == "list":
+                return "\n".join(sorted({w.title for w in all_windows})) or "Keine Fenster."
+            matches = [w for w in all_windows if title.lower() in w.title.lower()] if title else []
+            if not matches:
+                raise ToolError(f"Kein Fenster mit '{title}' im Titel. Mit action 'list' nachsehen.")
+            window = matches[0]
+            if action == "activate":
+                if window.isMinimized:
+                    window.restore()
+                window.activate()
+            elif action == "minimize":
+                window.minimize()
+            else:
+                window.maximize()
+            return f"{action}: {window.title}"
+
+        @self.add("pc", (
+            "PC-Funktionen: volume_up, volume_down, mute, play_pause, next_track, previous_track, lock "
+            "(PC sperren), clipboard_get, clipboard_set (text), info (System, Bildschirmgröße)."
+        ), _obj({
+            "action": {"type": "string", "enum": ["volume_up", "volume_down", "mute", "play_pause", "next_track",
+                                                  "previous_track", "lock", "clipboard_get", "clipboard_set", "info"]},
+            "text": {"type": "string"},
+            "times": {"type": "integer", "description": "Für volume_up/down: Anzahl Stufen (Standard 5)"},
+        }, ["action"]))
+        def pc(action: str, text: str = "", times: int = 5) -> str:
+            import platform
+
+            gui = _gui()
+            media = {"volume_up": "volumeup", "volume_down": "volumedown", "mute": "volumemute",
+                     "play_pause": "playpause", "next_track": "nexttrack", "previous_track": "prevtrack"}
+            if action in media:
+                presses = max(1, min(times, 50)) if action.startswith("volume_") and action != "mute" else 1
+                gui.press(media[action], presses=presses)
+                return f"{action} ausgeführt."
+            if action == "lock":
+                if sys.platform == "win32":
+                    subprocess.Popen(["rundll32.exe", "user32.dll,LockWorkStation"])
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["pmset", "displaysleepnow"])
+                else:
+                    subprocess.Popen(["loginctl", "lock-session"])
+                return "PC gesperrt."
+            if action in {"clipboard_get", "clipboard_set"}:
+                import pyperclip
+                if action == "clipboard_get":
+                    return pyperclip.paste() or "(Zwischenablage leer)"
+                pyperclip.copy(text)
+                return "In die Zwischenablage kopiert."
+            width, height = gui.size()
+            return (f"System: {platform.system()} {platform.release()} ({platform.machine()}), "
+                    f"Bildschirm: {width}x{height}, Rechnername: {platform.node()}")
+
     def _register_phone(self) -> None:
         @self.add("open", (
-            "Öffne etwas auf dem Handy: eine URL, eine Datei (mit passender App), eine App per Paketname "
-            "(z. B. com.whatsapp) oder einen Intent-Link (tel:, mailto:, geo:, whatsapp://…)."
+            "Öffne etwas: eine URL, eine Datei (mit passender App), eine App oder einen Link "
+            "(tel:, mailto:, geo:, whatsapp://…). Handy: App per Paketname (z. B. com.whatsapp). "
+            "PC: Programm per Name mit kind='app' (z. B. notepad, calc, spotify, chrome)."
         ), _obj({
             "target": {"type": "string"},
             "kind": {"type": "string", "enum": ["auto", "url", "file", "app"]},
@@ -572,14 +814,19 @@ class Toolbox:
                 else:
                     kind = "url"
             if kind == "app":
-                if not shutil.which("monkey") and not shutil.which("am"):
-                    raise ToolError("Apps starten geht nur auf Android (Termux).")
-                return _run(["monkey", "-p", target, "-c", "android.intent.category.LAUNCHER", "1"])
+                if shutil.which("monkey"):
+                    return _run(["monkey", "-p", target, "-c", "android.intent.category.LAUNCHER", "1"])
+                return _launch_program(target)
             if kind == "file":
                 target = str(self.resolve(target))
             if _is_termux():
                 return _termux("termux-open", target) if kind == "file" else _termux("termux-open-url", target)
-            webbrowser.open(target if kind == "url" else Path(target).as_uri())
+            if kind == "file" and sys.platform == "win32":
+                os.startfile(target)  # noqa: S606 – öffnet mit der verknüpften App
+            elif kind == "file" and sys.platform == "darwin":
+                subprocess.Popen(["open", target])
+            else:
+                webbrowser.open(target if kind == "url" else Path(target).as_uri())
             return f"Geöffnet: {target}"
 
         @self.add("list_apps", "Liste installierte Apps (Paketnamen) auf, optional gefiltert.", _obj({

@@ -25,6 +25,10 @@ Emit = Callable[[str, dict], None]
 Transport = Callable[[dict], Iterable[dict]]
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
+# Jarvis baut den Verlauf jedes Mal neu (aktuelles Profil im System-Prompt, gekürzte Verläufe,
+# Platzhalter statt Bildern). Neuere Claude-Konten lehnen dann wiedergegebene Denkblöcke mit 400 ab –
+# mit "drop_block" verwirft die API nur die betroffenen Denkblöcke und antwortet trotzdem.
+BINDING_BETA = "thinking-binding-controls-2026-08-01"
 WEB_TOOL_NAMES = {"web_search", "web_fetch"}
 RETRY_STATUS = {429, 500, 502, 503, 504}
 MAX_RETRY_WAIT = 30
@@ -88,7 +92,7 @@ class AnthropicBackend:
 
     def _fallbacks(self, kwargs: dict) -> dict:
         if self.settings.fallbacks:
-            kwargs["betas"] = [FALLBACK_BETA]
+            kwargs["betas"] = [*kwargs.get("betas", []), FALLBACK_BETA]
             kwargs["fallbacks"] = "default"
         return kwargs
 
@@ -115,9 +119,11 @@ class AnthropicBackend:
                 {"type": "text", "text": profile},
             ],
             "tools": self._tools(tools),
-            "thinking": {"type": "adaptive", "display": "summarized"},
+            "thinking": {"type": "adaptive", "display": "summarized",
+                         "block_binding": {"prefix_mismatch_behavior": "drop_block"}},
             "output_config": {"effort": self.settings.effort},
             "cache_control": {"type": "ephemeral"},
+            "betas": [BINDING_BETA],
         })
 
         def run():
@@ -169,8 +175,17 @@ def _call_id(original: str) -> str:
 def _result_text(block: dict) -> str:
     content = block.get("content", "")
     if isinstance(content, list):
-        content = "\n".join(b.get("text", "") for b in content if isinstance(b, dict))
+        content = "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
     return ("FEHLER: " if block.get("is_error") else "") + str(content)
+
+
+def _is_image(block: dict) -> bool:
+    return block.get("type") == "image" and block.get("source", {}).get("type") == "base64"
+
+
+def _image_part(block: dict) -> dict:
+    src = block["source"]
+    return {"type": "image_url", "image_url": {"url": f"data:{src['media_type']};base64,{src['data']}"}}
 
 
 def to_openai_messages(system: str, messages: list[dict]) -> list[dict]:
@@ -211,6 +226,7 @@ def to_openai_messages(system: str, messages: list[dict]) -> list[dict]:
             continue
 
         parts: list[dict] = []
+        tool_images: list[dict] = []
         for block in content:
             kind = block.get("type")
             if kind == "tool_result":
@@ -218,12 +234,17 @@ def to_openai_messages(system: str, messages: list[dict]) -> list[dict]:
                 if cid in pending:
                     pending.remove(cid)
                     out.append({"role": "tool", "tool_call_id": cid, "content": _result_text(block)})
+                    if isinstance(block.get("content"), list):
+                        tool_images += [_image_part(b) for b in block["content"] if _is_image(b)]
             elif kind == "text":
                 parts.append({"type": "text", "text": block["text"]})
-            elif kind == "image" and block.get("source", {}).get("type") == "base64":
-                src = block["source"]
-                parts.append({"type": "image_url",
-                              "image_url": {"url": f"data:{src['media_type']};base64,{src['data']}"}})
+            elif _is_image(block):
+                parts.append(_image_part(block))
+        if tool_images:
+            # Tool-Nachrichten können bei OpenAI-kompatiblen APIs keine Bilder tragen → eigene Nachricht.
+            flush()
+            out.append({"role": "user", "content": [
+                {"type": "text", "text": "(Bild aus dem letzten Werkzeug-Ergebnis)"}, *tool_images]})
         if parts:
             flush()
             if all(p["type"] == "text" for p in parts):
